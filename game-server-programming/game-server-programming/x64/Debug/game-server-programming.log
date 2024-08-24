@@ -1,8 +1,9 @@
-﻿  main.cpp
+﻿  server.cpp
   Please define _WIN32_WINNT or _WIN32_WINDOWS appropriately. For example:
   - add -D_WIN32_WINNT=0x0601 to the compiler command line; or
   - add _WIN32_WINNT=0x0601 to your project's Preprocessor Definitions.
   Assuming _WIN32_WINNT=0x0601 (i.e. Windows 7 target).
-  socket.cpp
-  코드를 생성하고 있습니다...
-  game-server-programming.vcxproj -> C:\Users\jsilv\project\game-server-programming\x64\Debug\game-server-programming.exe
+C:\library\boost_1_86_0\boost\bind.hpp(41): message : The practice of declaring the Bind placeholders (_1, _2, ...) in the global namespace is deprecated. Please use <boost/bind/bind.hpp> + using namespace boost::placeholders, or define BOOST_BIND_GLOBAL_PLACEHOLDERS to retain the current behavior.
+C:\Users\jsilv\project\soccer-game\game-server-programming\game-server-programming\server.cpp(15,20): warning C4018: '<': signed 또는 unsigned가 일치하지 않습니다.
+  test.cpp
+  game-server-programming.vcxproj -> C:\Users\jsilv\project\soccer-game\game-server-programming\x64\Debug\game-server-programming.exe

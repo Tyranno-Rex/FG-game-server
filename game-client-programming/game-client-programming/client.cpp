@@ -1,169 +1,94 @@
-//#include <iostream>
-//#include <string>
-//#include <winsock2.h>
-//#include <ws2tcpip.h>
-//
-//#pragma comment(lib, "ws2_32.lib")
-//
-//int main() {
-//    WSADATA wsaData;
-//    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-//        std::cout << "WSAStartup failed." << std::endl;
-//        return 1;
-//    }
-//
-//    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-//    if (clientSocket == INVALID_SOCKET) {
-//        std::cout << "Socket creation failed." << std::endl;
-//        WSACleanup();
-//        return 1;
-//    }
-//
-//    sockaddr_in serverAddr;
-//    serverAddr.sin_family = AF_INET;
-//    serverAddr.sin_port = htons(8080);
-//    inet_pton(AF_INET, "127.0.0.1", &serverAddr.sin_addr);
-//
-//    if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-//        std::cout << "Connection failed." << std::endl;
-//        closesocket(clientSocket);
-//        WSACleanup();
-//        return 1;
-//    }
-//
-//    std::string message;
-//    char buffer[1024];
-//
-//    while (true) {
-//        std::cout << "Enter message (or 'quit' to exit): ";
-//        std::getline(std::cin, message);
-//
-//        if (message == "quit") {
-//            break;
-//        }
-//
-//        send(clientSocket, message.c_str(), message.length(), 0);
-//        std::cout << "Message sent." << std::endl;
-//
-//        int bytesReceived = recv(clientSocket, buffer, 1024, 0);
-//        if (bytesReceived > 0) {
-//            buffer[bytesReceived] = '\0';
-//            std::cout << "Received: " << buffer << std::endl;
-//        }
-//    }
-//
-//    closesocket(clientSocket);
-//    WSACleanup();
-//
-//    return 0;
-//}
 
-#include <iostream>
-#include <thread>
-#include <deque>
-#include <boost/asio.hpp>
+#include "client.h"
 
-using boost::asio::ip::tcp;
+mutex d_lock;
 
-class ChatClient {
-public:
-    ChatClient(boost::asio::io_context& io_context, const tcp::resolver::results_type& endpoints)
-        : socket_(io_context) {
-        do_connect(endpoints);
-    }
+Client::Client(string ip, unsigned short port) : m_endpoint(asio::ip::address::from_string(ip), port)
+{
+	m_work.reset(new asio::io_service::work(m_ios));
+	m_sock.reset(new boost::asio::ip::tcp::socket(m_ios, m_endpoint.protocol()));
+}
 
-    void write(const std::string& msg) {
-        boost::asio::post(socket_.get_executor(),
-            [this, msg]() {
-                bool write_in_progress = !write_msgs_.empty();
-                write_msgs_.push_back(msg + "\n");
-                if (!write_in_progress) {
-                    do_write();
-                }
-            });
-    }
+void Client::Start(string nickName)
+{
+	for (int i = 0; i < 4; i++)
+	{
+		m_threadGroup.create_thread(bind(&Client::Run, this));
+	}
 
-    void close() {
-        boost::asio::post(socket_.get_executor(), [this]() { socket_.close(); });
-    }
+	Service* service = new Service(m_ios, m_sock);
+	m_sock->async_connect(m_endpoint, bind(&Service::Start, service, nickName));
+}
 
-private:
-    void do_connect(const tcp::resolver::results_type& endpoints) {
-        boost::asio::async_connect(socket_, endpoints,
-            [this](boost::system::error_code ec, tcp::endpoint) {
-                if (!ec) {
-                    do_read();
-                }
-            });
-    }
+void Service::Start(string nickName)
+{
+	m_sock->write_some(asio::buffer(nickName));
+	m_ios.post(bind(&Service::ReceivedFunc, this));
+	m_ios.post(bind(&Service::SendFunc, this));
+}
 
-    void do_read() {
-        boost::asio::async_read_until(socket_, read_buffer_, "\n",
-            [this](boost::system::error_code ec, std::size_t /*length*/) {
-                if (!ec) {
-                    std::string msg;
-                    std::istream is(&read_buffer_);
-                    std::getline(is, msg);
-                    std::cout << msg << std::endl;
-                    do_read();
-                }
-                else {
-                    close();
-                }
-            });
-    }
+void Client::Run()
+{
+	PrintTid("Thread Start!");
+	m_ios.run();
+	PrintTid("Thread FInish!");
+}
 
-    void do_write() {
-        boost::asio::async_write(socket_,
-            boost::asio::buffer(write_msgs_.front()),
-            [this](boost::system::error_code ec, std::size_t /*length*/) {
-                if (!ec) {
-                    write_msgs_.pop_front();
-                    if (!write_msgs_.empty()) {
-                        do_write();
-                    }
-                }
-                else {
-                    close();
-                }
-            });
-    }
+void Service::ReceivedFunc()
+{
+	m_sock->async_read_some(asio::buffer(m_readBuf, MAXBUF), bind(&Service::ReceivedError, this, _1, _2));
+}
 
-    tcp::socket socket_;
-    boost::asio::streambuf read_buffer_;
-    std::deque<std::string> write_msgs_;
-};
+void Service::ReceivedError(const boost::system::error_code& ec, size_t bytes_transferred)
+{
+	if (ec) {
+		std::cout << "[" << (*m_sock).local_endpoint() << "]"
+			<< "Error occured! Error code = "
+			<< ec.value()
+			<< ". Message: " << ec.message()
+			<< endl;
+		m_sock->close();
+		return;
+	}
 
-int main(int argc, char* argv[]) {
-    try {
-        if (argc != 4) {
-            std::cerr << "Usage: chat_client <host> <port> <room>\n";
-            return 1;
-        }
+	if (bytes_transferred == 0) {
+		std::cout << "[" << (*m_sock).local_endpoint() << "]"
+			<< "Good Bye Client!" << endl;
+		m_sock->close();
+		return;
+	}
 
-        boost::asio::io_context io_context;
+	m_readBuf[bytes_transferred] = '\0';
+	cout << m_readBuf << endl;
+	m_ios.post(bind(&Service::ReceivedFunc, this));
+}
 
-        tcp::resolver resolver(io_context);
-        auto endpoints = resolver.resolve(argv[1], argv[2]);
 
-        ChatClient client(io_context, endpoints);
+void Service::SendFunc()
+{
+	fflush(stdin);
+	std::getline(std::cin, m_writeBuf);
+	m_sock->async_write_some(asio::buffer(m_writeBuf), bind(&Service::SendError, this, _1, _2));
+}
 
-        std::thread t([&io_context]() { io_context.run(); });
+void Service::SendError(const boost::system::error_code& ec, size_t bytes_transferred)
+{
+	if (ec) {
+		std::cout << "[" << (*m_sock).local_endpoint() << "]"
+			<< "Error occured! Error code = "
+			<< ec.value()
+			<< ". Message: " << ec.message()
+			<< endl;
+		m_sock->close();
+		return;
+	}
 
-        // Send room name
-        client.write(argv[3]);
+	m_ios.post(bind(&Service::SendFunc, this));
+}
 
-        std::string line;
-        while (std::getline(std::cin, line)) {
-            client.write(line);
-        }
-
-        client.close();
-        t.join();
-    }
-    catch (std::exception& e) {
-        std::cerr << "Exception: " << e.what() << "\n";
-    }
-
-    return 0;
+void PrintTid(std::string mes)
+{
+	d_lock.lock();
+	std::cout << "[" << this_thread::get_id() << "]  " << mes << std::endl;
+	d_lock.unlock();
 }
