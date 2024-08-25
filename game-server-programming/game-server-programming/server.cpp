@@ -108,7 +108,7 @@ void Service::StartHandling()
 	m_client = new Client(m_sock, m_request);
 	roomVec[0]->m_sockVector.push_back(m_client);
 	sockVector.push_back(m_client);
-	cout << "���� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
+	cout << "Now Clinet Count : " << sockVector.size() << endl;
 	d_lock.unlock();
 
 	m_nickName = m_request;
@@ -206,7 +206,7 @@ void Service::onRequestReceived(const boost::system::error_code& ec, size_t byte
 
 		for (auto oneOfRoom : roomVec)
 		{
-			m_response = m_response + "[" + oneOfRoom->m_roomName + "]" + "���� : " + oneOfRoom->m_sockVector[0]->m_nickName + "\n";
+			m_response = m_response + "[" + oneOfRoom->m_roomName + "]" + " [Size : " + to_string(oneOfRoom->m_sockVector.size()) + "] [Owner : " + oneOfRoom->m_sockVector[0]->m_nickName + "]\n";
 		}
 
 		d_lock.lock();
@@ -425,7 +425,7 @@ void Service::createRoom2(const boost::system::error_code& ec, size_t bytes_tran
 		}
 	}
 
-	cout << "����� �Ϸ�!" << room->m_roomName << endl;
+	cout << "Room Created : " << roomName << endl;
 
 	for (int i = 0; i < roomVec.size(); i++)
 	{
@@ -494,8 +494,7 @@ void Service::EnterRoom2(const boost::system::error_code& ec, size_t bytes_trans
 		{
 			roomVec[i]->m_sockVector.push_back(m_client);
 			m_client->m_roomNum = i;
-			cout << "[" << m_client->m_roomNum << " : " << roomVec[i]->m_roomName
-				<< "]" << "�� " << m_nickName << "���� �����ϼ̽��ϴ�." << endl;
+			cout << "[" << m_client->m_roomNum << " : " << m_nickName << " Enter Room : " << roomName << "]" << endl;
 
 			for (int i = 0; i < roomVec[0]->m_sockVector.size(); i++)
 			{
@@ -549,7 +548,7 @@ void Service::onFinish(shared_ptr<asio::ip::tcp::socket> sock)
 		{
 			d_lock.lock();
 			sockVector.erase(sockVector.begin() + i);
-			cout << "���� �� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
+			cout << "now client count : " << sockVector.size() << endl;
 			d_lock.unlock();
 		}
 	}
@@ -560,8 +559,7 @@ void Service::onFinish(shared_ptr<asio::ip::tcp::socket> sock)
 		{
 			d_lock.lock();
 			roomVec[m_client->m_roomNum]->m_sockVector.erase(roomVec[m_client->m_roomNum]->m_sockVector.begin() + i);
-			cout << "����" << roomVec[m_client->m_roomNum]->m_roomName
-				<< " Ŭ���̾�Ʈ�� �� : " << roomVec[m_client->m_roomNum]->m_sockVector.size() << endl;
+			cout << "now Room[" << roomVec[m_client->m_roomNum]->m_roomName << "] client count : " << roomVec[m_client->m_roomNum]->m_sockVector.size() << endl;
 			d_lock.unlock();
 		}
 	}
