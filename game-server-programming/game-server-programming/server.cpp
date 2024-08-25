@@ -1,83 +1,97 @@
 #include "server.h"
 
-vector<Client*> sockVector;
-vector<Room*> roomVec;
-mutex d_lock;
+// 전역 변수로 클라이언트와 방의 정보를 저장하는 벡터와 동기화를 위한 뮤텍스 선언
+vector<Client*> sockVector; // 연결된 클라이언트 소켓을 관리하는 벡터
+vector<Room*> roomVec; // 채팅 방(Room) 객체를 관리하는 벡터
+mutex d_lock; // 동기화를 위한 뮤텍스
 
+// Server 클래스의 Start 메서드 정의
 void Server::Start(unsigned short port_num, unsigned int thread_pool_size)
 {
-	assert(thread_pool_size > 0);
-	Room* room = new Room("AnterRoom");
-	roomVec.push_back(room);
-	acc.reset(new Acceptor(m_ios, port_num));
-	acc->Start();
+    assert(thread_pool_size > 0); // 스레드 풀 크기가 0보다 큰지 확인
 
-	for (int i = 0; i < thread_pool_size; i++)
-	{
-		m_thread_pool.create_thread(bind(&Server::Run, this));
-	}
+    // 기본 방을 생성하고 벡터에 추가
+    Room* room = new Room("AnterRoom");
+    roomVec.push_back(room);
+
+    // Acceptor 객체를 생성하여 서버 소켓을 설정
+    acc.reset(new Acceptor(m_ios, port_num));
+    acc->Start(); // 수신 대기 시작
+
+    // 지정된 크기만큼 스레드 풀 생성 및 실행
+    for (int i = 0; i < thread_pool_size; i++)
+    {
+        m_thread_pool.create_thread(bind(&Server::Run, this));
+    }
 }
 
+// Server 클래스의 Run 메서드 정의
 void Server::Run()
 {
-	PrintTid("ThreadStart!");
-	m_ios.run();
-	PrintTid("ThreadFinish!");
+    PrintTid("ThreadStart!"); // 스레드 시작 메시지 출력
+    m_ios.run(); // 비동기 작업을 수행하는 io_service 실행
+    PrintTid("ThreadFinish!"); // 스레드 종료 메시지 출력
 }
 
+// Server 클래스의 Stop 메서드 정의
 void Server::Stop()
 {
-	acc->Stop();
-	m_ios.stop();
-	m_thread_pool.join_all();
+    acc->Stop(); // 수신 대기를 중지
+    m_ios.stop(); // io_service 중지
+    m_thread_pool.join_all(); // 모든 스레드가 종료될 때까지 대기
 }
 
+// Acceptor 클래스의 생성자 정의
 Acceptor::Acceptor(asio::io_service& ios, unsigned short port_num) :
-	m_ios(ios), m_acc_strand(m_ios),
-	m_acceptor(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num)),
-	m_isStopped(false)
+    m_ios(ios), m_acc_strand(m_ios),
+    m_acceptor(m_ios, asio::ip::tcp::endpoint(asio::ip::address_v4::any(), port_num)),
+    m_isStopped(false)
 {}
 
+// Acceptor 클래스의 Start 메서드 정의
 void Acceptor::Start()
 {
-	m_acceptor.listen();
-	InitAccept();
+    m_acceptor.listen(); // 소켓이 수신 대기 상태로 전환
+    InitAccept(); // 새로운 연결 요청 대기 시작
 }
 
+// Acceptor 클래스의 InitAccept 메서드 정의
 void Acceptor::InitAccept()
 {
-	sock.reset(new asio::ip::tcp::socket(m_ios));
+    sock.reset(new asio::ip::tcp::socket(m_ios)); // 새 소켓 객체 생성
 
-	d_lock.lock();
-
-	m_acceptor.async_accept(*sock, m_acc_strand.wrap(bind(&Acceptor::onAccept, this, _1, sock)));
-	d_lock.unlock();
+    d_lock.lock(); // 멀티스레드 환경에서 안전하게 작업하기 위해 뮤텍스 잠금
+    m_acceptor.async_accept(*sock, m_acc_strand.wrap(bind(&Acceptor::onAccept, this, _1, sock))); // 비동기 수신 시작
+    d_lock.unlock(); // 뮤텍스 잠금 해제
 }
 
+// 비동기 수신이 완료되면 호출되는 콜백 함수
 void Acceptor::onAccept(const boost::system::error_code& ec, shared_ptr<asio::ip::tcp::socket> sock)
 {
-	if (!ec)
-	{
-		Service* serv = new Service(sock, m_ios);
-		m_acc_strand.post(bind(&Service::StartHandling, serv));
-	}
-	else
-	{
-		std::cout << "Error occured! Error code = "
-			<< ec.value()
-			<< ". Message: " << ec.message()
-			<< endl;
-	}
+    if (!ec)
+    {
+        Service* serv = new Service(sock, m_ios); // 새 서비스 객체 생성
+        m_acc_strand.post(bind(&Service::StartHandling, serv)); // 비동기로 서비스 시작
+    }
+    else
+    {
+        // 오류가 발생했을 때 오류 메시지 출력
+        std::cout << "Error occured! Error code = "
+            << ec.value()
+            << ". Message: " << ec.message()
+            << endl;
+    }
 
-	if (!m_isStopped.load())
-	{
-		InitAccept();
-	}
-	else
-	{
-		m_acceptor.close();
-	}
+    if (!m_isStopped.load())
+    {
+        InitAccept(); // 서버가 중지되지 않은 경우 다시 수신 대기
+    }
+    else
+    {
+        m_acceptor.close(); // 서버가 중지된 경우 수신 소켓 닫기
+    }
 }
+
 
 void Acceptor::Stop()
 {
@@ -94,7 +108,7 @@ void Service::StartHandling()
 	m_client = new Client(m_sock, m_request);
 	roomVec[0]->m_sockVector.push_back(m_client);
 	sockVector.push_back(m_client);
-	cout << "���� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
+	cout << "���� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
 	d_lock.unlock();
 
 	m_nickName = m_request;
@@ -192,7 +206,7 @@ void Service::onRequestReceived(const boost::system::error_code& ec, size_t byte
 
 		for (auto oneOfRoom : roomVec)
 		{
-			m_response = m_response + "[" + oneOfRoom->m_roomName + "]" + "���� : " + oneOfRoom->m_sockVector[0]->m_nickName + "\n";
+			m_response = m_response + "[" + oneOfRoom->m_roomName + "]" + "���� : " + oneOfRoom->m_sockVector[0]->m_nickName + "\n";
 		}
 
 		d_lock.lock();
@@ -411,7 +425,7 @@ void Service::createRoom2(const boost::system::error_code& ec, size_t bytes_tran
 		}
 	}
 
-	cout << "����� �Ϸ�!" << room->m_roomName << endl;
+	cout << "����� �Ϸ�!" << room->m_roomName << endl;
 
 	for (int i = 0; i < roomVec.size(); i++)
 	{
@@ -481,7 +495,7 @@ void Service::EnterRoom2(const boost::system::error_code& ec, size_t bytes_trans
 			roomVec[i]->m_sockVector.push_back(m_client);
 			m_client->m_roomNum = i;
 			cout << "[" << m_client->m_roomNum << " : " << roomVec[i]->m_roomName
-				<< "]" << "�� " << m_nickName << "���� �����ϼ̽��ϴ�." << endl;
+				<< "]" << "�� " << m_nickName << "���� �����ϼ̽��ϴ�." << endl;
 
 			for (int i = 0; i < roomVec[0]->m_sockVector.size(); i++)
 			{
@@ -535,7 +549,7 @@ void Service::onFinish(shared_ptr<asio::ip::tcp::socket> sock)
 		{
 			d_lock.lock();
 			sockVector.erase(sockVector.begin() + i);
-			cout << "���� �� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
+			cout << "���� �� Ŭ���̾�Ʈ�� �� : " << sockVector.size() << endl;
 			d_lock.unlock();
 		}
 	}
@@ -546,8 +560,8 @@ void Service::onFinish(shared_ptr<asio::ip::tcp::socket> sock)
 		{
 			d_lock.lock();
 			roomVec[m_client->m_roomNum]->m_sockVector.erase(roomVec[m_client->m_roomNum]->m_sockVector.begin() + i);
-			cout << "����" << roomVec[m_client->m_roomNum]->m_roomName
-				<< " Ŭ���̾�Ʈ�� �� : " << roomVec[m_client->m_roomNum]->m_sockVector.size() << endl;
+			cout << "����" << roomVec[m_client->m_roomNum]->m_roomName
+				<< " Ŭ���̾�Ʈ�� �� : " << roomVec[m_client->m_roomNum]->m_sockVector.size() << endl;
 			d_lock.unlock();
 		}
 	}
