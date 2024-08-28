@@ -92,145 +92,154 @@ void Acceptor::onAccept(const boost::system::error_code& ec, shared_ptr<asio::ip
     }
 }
 
-
+// Acceptor 클래스의 Stop 메서드 정의
 void Acceptor::Stop()
 {
 	m_isStopped = true;
 }
 
+// Service 클래스의 생성자 정의
 void Service::StartHandling()
 {
-	PrintTid("StartHandling");
+	PrintTid("StartHandling"); // 현재 쓰레드 ID를 출력하고, "StartHandling"이라는 상태 메시지를 출력
 
-	d_lock.lock();
-	m_sock->read_some(asio::buffer(m_request));
+	d_lock.lock(); // 뮤텍스(d_lock)를 잠금. 쓰레드 간 동기화 보장
+	m_sock->read_some(asio::buffer(m_request)); // 소켓으로부터 데이터를 읽어와서 m_request 버퍼에 저장
 
-	m_client = new Client(m_sock, m_request);
-	roomVec[0]->m_sockVector.push_back(m_client);
-	sockVector.push_back(m_client);
-	cout << "Now Clinet Count : " << sockVector.size() << endl;
-	d_lock.unlock();
+	m_client = new Client(m_sock, m_request); // 새로운 Client 객체를 생성하고 m_sock과 m_request를 전달
+	roomVec[0]->m_sockVector.push_back(m_client); // 첫 번째 방의 소켓 벡터에 새로운 클라이언트를 추가
+	sockVector.push_back(m_client); // 전체 소켓 벡터에도 클라이언트를 추가
+	cout << "Now Client Count : " << sockVector.size() << endl; // 현재 클라이언트 수를 출력
+	d_lock.unlock(); // 뮤텍스 잠금 해제
 
-	m_nickName = m_request;
-	PrintTid("WaitReading");
-	memset(m_request, '\0', MAXBUF);
+	m_nickName = m_request; // 클라이언트의 요청을 닉네임으로 설정
+	PrintTid("WaitReading"); // 현재 쓰레드 ID를 출력하고, "WaitReading" 상태 메시지를 출력
+	memset(m_request, '\0', MAXBUF); // m_request 버퍼를 초기화
 
-	d_lock.lock();
+	d_lock.lock(); // 뮤텍스(d_lock)를 다시 잠금
 	m_sock->async_read_some(asio::buffer(m_request, MAXBUF), m_io_strand.wrap(bind(&Service::onRequestReceived, this, _1, _2)));
-	d_lock.unlock();
+	// 비동기적으로 데이터를 읽어와 m_request 버퍼에 저장하고, 읽기가 완료되면 onRequestReceived 함수를 호출하도록 설정
+	d_lock.unlock(); // 뮤텍스 잠금 해제
 }
+
 
 void Service::onRequestReceived(const boost::system::error_code& ec, size_t bytes_transferred)
 {
-	if (exitClient || m_whisperbool) return;
+	if (exitClient || m_whisperbool) return; // 클라이언트가 종료하거나, 귓속말 모드인 경우 함수 종료
 
-	if (ec)
+	if (ec) // 에러가 발생한 경우
 	{
 		std::cout << "[" << (*m_sock).local_endpoint() << "]"
 			<< "Error occured! Error code = "
 			<< ec.value()
 			<< ". Message: " << ec.message()
-			<< endl;
-		onFinish(m_sock);
+			<< endl; // 에러 메시지 출력
+		onFinish(m_sock); // 소켓을 종료하는 함수 호출
 		return;
 	}
 
-	if (bytes_transferred == 0)
+	if (bytes_transferred == 0) // 전송된 바이트가 없는 경우
 	{
 		std::cout << "[" << (*m_sock).local_endpoint() << "]"
-			<< "Good Bye Client!" << endl;
-		onFinish(m_sock);
+			<< "Good Bye Client!" << endl; // 클라이언트가 연결을 종료한 것으로 간주하고 메시지 출력
+		onFinish(m_sock); // 소켓 종료 함수 호출
 		return;
 	}
 
-	PrintTid("StartWriting");
+	PrintTid("StartWriting"); // 현재 쓰레드 ID를 출력하고, "StartWriting" 상태 메시지를 출력
 
-	if (strcmp(m_request, "/w") == 0)
+	if (strcmp(m_request, "/w") == 0) // 만약 클라이언트의 요청이 "/w" (귓속말 명령어)인 경우
 	{
-		m_whisperbool = true;
-		m_response = "Input NickName!";
-		d_lock.lock();
+		m_whisperbool = true; // 귓속말 모드 활성화
+		m_response = "Input NickName!"; // 닉네임 입력 요청 메시지 설정
+		d_lock.lock(); // 뮤텍스 잠금
 		m_sock->async_write_some(asio::buffer(m_response), bind(&Service::Whisper, this, _1, _2));
-		d_lock.unlock();
+		// 비동기적으로 닉네임 입력 요청 메시지를 전송하고, 전송 완료 후 Whisper 함수를 호출하도록 설정
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 		return;
 	}
 
-	else if ((strcmp(m_request, "/create") == 0) && (m_client->m_roomNum == 0))
+	else if ((strcmp(m_request, "/create") == 0) && (m_client->m_roomNum == 0)) // 방 생성 명령어를 받은 경우, 클라이언트가 현재 방에 속해있지 않을 때
 	{
-		m_response = "Input RoomName!";
-		d_lock.lock();
+		m_response = "Input RoomName!"; // 방 이름 입력 요청 메시지 설정
+		d_lock.lock(); // 뮤텍스 잠금
 		m_sock->async_write_some(asio::buffer(m_response), bind(&Service::createRoom, this, _1, _2));
-		d_lock.unlock();
+		// 비동기적으로 방 이름 입력 요청 메시지를 전송하고, 전송 완료 후 createRoom 함수를 호출하도록 설정
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 		return;
 	}
 
-	else if ((strcmp(m_request, "/enter") == 0) && (m_client->m_roomNum == 0))
+	else if ((strcmp(m_request, "/enter") == 0) && (m_client->m_roomNum == 0)) // 방 입장 명령어를 받은 경우, 클라이언트가 현재 방에 속해있지 않을 때
 	{
-		m_response = "Input RoomName!";
-		d_lock.lock();
+		m_response = "Input RoomName!"; // 방 이름 입력 요청 메시지 설정
+		d_lock.lock(); // 뮤텍스 잠금
 		m_sock->async_write_some(asio::buffer(m_response), bind(&Service::EnterRoom, this, _1, _2));
-		d_lock.unlock();
+		// 비동기적으로 방 이름 입력 요청 메시지를 전송하고, 전송 완료 후 EnterRoom 함수를 호출하도록 설정
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 		return;
 	}
 
-	else if ((strcmp(m_request, "/exit") == 0) && (m_client->m_roomNum != 0))
+	else if ((strcmp(m_request, "/exit") == 0) && (m_client->m_roomNum != 0)) // 방 나가기 명령어를 받은 경우, 클라이언트가 현재 방에 속해 있을 때
 	{
-		roomVec[0]->m_sockVector.push_back(m_client);
+		roomVec[0]->m_sockVector.push_back(m_client); // 클라이언트를 첫 번째 방으로 이동
 
-		for (int i = 0; i < roomVec[m_client->m_roomNum]->m_sockVector.size(); i++)
+		for (int i = 0; i < roomVec[m_client->m_roomNum]->m_sockVector.size(); i++) // 클라이언트가 속한 방에서 클라이언트를 찾기 위해 반복문 실행
 		{
-			if (roomVec[m_client->m_roomNum]->m_sockVector[i] == m_client)
+			if (roomVec[m_client->m_roomNum]->m_sockVector[i] == m_client) // 클라이언트를 찾은 경우
 			{
-				roomVec[m_client->m_roomNum]->m_sockVector.erase((roomVec[m_client->m_roomNum]->m_sockVector.begin() + i));
+				roomVec[m_client->m_roomNum]->m_sockVector.erase((roomVec[m_client->m_roomNum]->m_sockVector.begin() + i)); // 벡터에서 클라이언트 제거
 
-				if (roomVec[m_client->m_roomNum]->m_sockVector.size() == 0)
+				if (roomVec[m_client->m_roomNum]->m_sockVector.size() == 0) // 방에 남아있는 클라이언트가 없는 경우
 				{
-					roomVec.erase(roomVec.begin() + m_client->m_roomNum);
+					roomVec.erase(roomVec.begin() + m_client->m_roomNum); // 빈 방을 벡터에서 제거
 				}
-				break;
+				break; // 반복문 종료
 			}
 		}
 
-		m_client->m_roomNum = 0;
+		m_client->m_roomNum = 0; // 클라이언트의 방 번호를 0으로 설정 (어느 방에도 속하지 않음을 의미)
 
-		d_lock.lock();
+		d_lock.lock(); // 뮤텍스 잠금
 		m_sock->async_read_some(asio::buffer(m_request, MAXBUF), m_io_strand.wrap(bind(&Service::onRequestReceived, this, _1, _2)));
-		d_lock.unlock();
+		// 비동기적으로 데이터를 읽어와 m_request 버퍼에 저장하고, 읽기가 완료되면 onRequestReceived 함수를 호출하도록 설정
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 		return;
 	}
 
-	else if (strcmp(m_request, "/room") == 0)
+	else if (strcmp(m_request, "/room") == 0) // 현재 존재하는 방 정보를 요청한 경우
 	{
 		system::error_code ec;
 		m_response = "";
 
-		for (auto oneOfRoom : roomVec)
+		for (auto oneOfRoom : roomVec) // 모든 방을 순회하면서
 		{
 			m_response = m_response + "[" + oneOfRoom->m_roomName + "]" + " [Size : " + to_string(oneOfRoom->m_sockVector.size()) + "] [Owner : " + oneOfRoom->m_sockVector[0]->m_nickName + "]\n";
+			// 각 방의 이름, 인원 수, 방장 이름을 m_response에 추가
 		}
 
-		d_lock.lock();
-		m_client->m_sock->write_some(asio::buffer(m_response), ec);
-		d_lock.unlock();
+		d_lock.lock(); // 뮤텍스 잠금
+		m_client->m_sock->write_some(asio::buffer(m_response), ec); // 방 정보를 클라이언트에게 전송
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 
-		if (ec)
+		if (ec) // 전송 중 에러가 발생한 경우
 		{
 			std::cout << "Error occured! Error code = "
 				<< ec.value()
-				<< ". Message: " << ec.message();
+				<< ". Message: " << ec.message(); // 에러 메시지 출력
 		}
 
-		memset(m_request, '\0', MAXBUF);
+		memset(m_request, '\0', MAXBUF); // m_request 버퍼 초기화
 
-		d_lock.lock();
+		d_lock.lock(); // 뮤텍스 잠금
 		m_sock->async_read_some(asio::buffer(m_request, MAXBUF), m_io_strand.wrap(bind(&Service::onRequestReceived, this, _1, _2)));
-		d_lock.unlock();
+		// 비동기적으로 데이터를 읽어와 m_request 버퍼에 저장하고, 읽기가 완료되면 onRequestReceived 함수를 호출하도록 설정
+		d_lock.unlock(); // 뮤텍스 잠금 해제
 		return;
 	}
 
-	m_request[bytes_transferred] = '\0';
-	m_response = m_nickName + " : " + m_request;
-	m_io_strand.post(bind(&Service::EchoSend, this, m_response));
+	m_request[bytes_transferred] = '\0'; // 수신된 데이터의 끝에 널 문자를 추가하여 문자열 종료
+	m_response = m_nickName + " : " + m_request; // 클라이언트의 닉네임과 수신된 메시지를 합쳐 m_response에 저장
+	m_io_strand.post(bind(&Service::EchoSend, this, m_response)); // EchoSend 함수를 호출하여 클라이언트에게 메시지 에코
 }
 
 void Service::Whisper(const boost::system::error_code& ec, size_t bytes_transferred)

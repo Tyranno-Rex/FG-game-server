@@ -98,7 +98,6 @@ public:
 	void Stop();
 };
 
-
 class Server
 {
 	asio::io_service m_ios;
